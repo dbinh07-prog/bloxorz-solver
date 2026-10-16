@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+*.egg-info/
+build/
+dist/
+
+# Test và công cụ
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+htmlcov/
+
+# Editor / hệ điều hành
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Kết quả sinh ra khi chạy, vẫn giữ folder output trong Git
+output/*
+!output/.gitkeep
+
+# File đóng gói và video demo để ngoài repo
+*.zip
+*.rar
+*.7z
+*.mp4
+*.mov
+*.avi

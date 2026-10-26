@@ -141,6 +141,25 @@ class _FallbackBoard:
         is_standing = ori == Orientation.STANDING or (hasattr(ori, "name") and ori.name == "STANDING") or ori == 0
         return is_standing and block.pos1 == self.goal
 
+    def available_actions(self, block):
+        actions = ["UP", "DOWN", "LEFT", "RIGHT"]
+        ori = getattr(block, "orientation", Orientation.STANDING)
+        is_split = ori == Orientation.SPLIT or (hasattr(ori, "name") and ori.name == "SPLIT") or ori == 3
+        if is_split:
+            actions.append("SWITCH")
+        return actions
+
+    def get_action_cost(self, result, action):
+        if str(action).upper() == "SWITCH":
+            return 0.5
+        cost = 1.0
+        cells = result.block.get_cells()
+        if any(self.is_fragile(r, c) for r, c in cells):
+            cost += 1.0
+        if getattr(result, "activated_switches", ()):
+            cost += 0.25 * len(result.activated_switches)
+        return cost
+
     def transition(self, block, bridge_states, action):
         """Logic transition fallback phục vụ kiểm thử độc lập GUI."""
         b_dict = self.bridge_state_dict(bridge_states)
@@ -163,9 +182,11 @@ class _FallbackBoard:
             if idx == 0:
                 np1 = (block.pos1[0] + dr, block.pos1[1] + dc)
                 np2 = block.pos2
+                moved_pos = np1
             else:
                 np1 = block.pos1
                 np2 = (block.pos2[0] + dr, block.pos2[1] + dc)
+                moved_pos = np2
 
             # Kiểm tra merge kề
             if abs(np1[0] - np2[0]) + abs(np1[1] - np2[1]) == 1:
@@ -179,7 +200,35 @@ class _FallbackBoard:
                 nb = _FallbackBlock(np1[0], np1[1], np2, Orientation.SPLIT, idx)
 
             valid = self.is_floor(np1[0], np1[1], bridge_states) and self.is_floor(np2[0], np2[1], bridge_states)
-            return TransitionResult(block=nb, bridge_states=bridge_states, activated_switches=(), valid=valid)
+            if not valid:
+                return TransitionResult(block=nb, bridge_states=bridge_states, activated_switches=(), valid=False)
+
+            # Xử lý switches cho chế độ SPLIT (chỉ soft switch kích hoạt khi dẫm bởi cube hoặc sau khi merge thành khối nằm)
+            new_b_dict = dict(b_dict)
+            activated = []
+            check_cells = nb.get_cells() if not nb.is_split else [moved_pos]
+            for cr, cc in check_cells:
+                sw = self.get_switch(cr, cc)
+                if sw:
+                    sw_type = str(sw.get("type", "")).strip().lower()
+                    if not sw_type:
+                        tile = self.tile_type(cr, cc)
+                        sw_type = "soft" if tile == "S" else ("heavy" if tile == "H" else ("split" if tile == "X" else "soft"))
+                    if sw_type == "soft":
+                        sw_id = sw.get("id", "")
+                        if sw_id and sw_id not in activated:
+                            activated.append(sw_id)
+                        for b_target in sw.get("bridges", []):
+                            action_type = sw.get("action", "toggle")
+                            if action_type == "toggle":
+                                new_b_dict[b_target] = not new_b_dict.get(b_target, False)
+                            elif action_type == "open":
+                                new_b_dict[b_target] = True
+                            elif action_type == "close":
+                                new_b_dict[b_target] = False
+
+            new_b_states = tuple(sorted(new_b_dict.items()))
+            return TransitionResult(block=nb, bridge_states=new_b_states, activated_switches=tuple(activated), valid=True)
 
         # 3. Lăn khối liền chuẩn
         r1, c1 = block.pos1
@@ -225,25 +274,63 @@ class _FallbackBoard:
                 return TransitionResult(block=nb, bridge_states=bridge_states, activated_switches=(), valid=False)
 
         # Đứng trên fragile thì sập
-        if nb.orientation == Orientation.STANDING and self.is_fragile(*nb.pos1):
+        nb_ori = getattr(nb, "orientation", Orientation.STANDING)
+        nb_is_standing = nb_ori == Orientation.STANDING or (hasattr(nb_ori, "name") and nb_ori.name == "STANDING") or nb_ori == 0
+        if nb_is_standing and self.is_fragile(*nb.pos1):
             return TransitionResult(block=nb, bridge_states=bridge_states, activated_switches=(), valid=False)
 
         # Xử lý switches
         new_b_dict = dict(b_dict)
+        activated = []
         for cr, cc in cells:
             sw = self.get_switch(cr, cc)
-            if sw:
-                for b_target in sw.get("bridges", []):
-                    action_type = sw.get("action", "toggle")
-                    if action_type == "toggle":
-                        new_b_dict[b_target] = not new_b_dict.get(b_target, False)
-                    elif action_type == "open":
-                        new_b_dict[b_target] = True
-                    elif action_type == "close":
-                        new_b_dict[b_target] = False
+            if not sw:
+                continue
+
+            sw_type = str(sw.get("type", "")).strip().lower()
+            if not sw_type:
+                tile = self.tile_type(cr, cc)
+                if tile == "H":
+                    sw_type = "heavy"
+                elif tile == "X":
+                    sw_type = "split"
+                elif tile == "S":
+                    sw_type = "soft"
+                else:
+                    sw_type = "soft"
+
+            # 1. Heavy switch: Chỉ kích hoạt khi khối đứng thẳng (standing) trên ô switch
+            if sw_type == "heavy":
+                if not nb_is_standing:
+                    continue
+
+            # 2. Split switch: Chỉ kích hoạt khi khối đứng thẳng (standing) trên ô split switch -> tách thành 2 cube 1x1x1
+            if sw_type == "split":
+                if not nb_is_standing:
+                    continue
+                targets = sw.get("targets", [])
+                if len(targets) == 2:
+                    t1 = tuple(targets[0])
+                    t2 = tuple(targets[1])
+                    nb = _FallbackBlock(t1[0], t1[1], t2, Orientation.SPLIT, active_index=0)
+
+            # Ghi nhận switch kích hoạt
+            sw_id = sw.get("id", "")
+            if sw_id and sw_id not in activated:
+                activated.append(sw_id)
+
+            # 3. Kích hoạt danh sách cầu liên kết (cho soft, heavy khi đứng, và split khi đứng)
+            for b_target in sw.get("bridges", []):
+                action_type = sw.get("action", "toggle")
+                if action_type == "toggle":
+                    new_b_dict[b_target] = not new_b_dict.get(b_target, False)
+                elif action_type == "open":
+                    new_b_dict[b_target] = True
+                elif action_type == "close":
+                    new_b_dict[b_target] = False
 
         new_b_states = tuple(sorted(new_b_dict.items()))
-        return TransitionResult(block=nb, bridge_states=new_b_states, activated_switches=(), valid=True)
+        return TransitionResult(block=nb, bridge_states=new_b_states, activated_switches=tuple(activated), valid=True)
 
 
 class Game(Entity):

@@ -380,7 +380,7 @@ class Game(Entity):
                 parent=camera,
                 model="quad",
                 texture=game_bg,
-                scale=(w * 1.3, h * 1.3),
+                scale=(w, h),
                 position=(0, 0, dist),
                 unlit=True,
                 double_sided=True,
@@ -479,8 +479,15 @@ class Game(Entity):
         self.try_move(action)
 
     def update(self):
-        """Ursina engine update loop."""
-        pass
+        """Tự động điều chỉnh kích thước background vừa khít màn hình khi thay đổi kích thước cửa sổ."""
+        if hasattr(self, "background") and self.background:
+            import math
+            dist = 150.0
+            fov = getattr(camera, "fov", 45.0)
+            h = 2.0 * dist * math.tan(math.radians(fov / 2.0))
+            aspect = getattr(camera, "aspect_ratio", 16 / 9)
+            w = h * aspect
+            self.background.scale = (w, h)
 
     def input(self, key):
         """Xử lý sự kiện bàn phím từ người chơi."""

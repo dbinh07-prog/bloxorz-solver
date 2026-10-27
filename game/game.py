@@ -11,6 +11,7 @@ from ursina import (
     color,
     destroy,
     invoke,
+    time as utime,
 )
 from ursina.models.procedural.quad import Quad
 
@@ -40,6 +41,18 @@ from ui.theme import (
     RESULT_TITLE_COLOR_WIN,
     WHITE,
 )
+
+
+def format_time(seconds):
+    """Định dạng số giây thành chuỗi MM:SS (hoặc HH:MM:SS nếu >= 1 giờ)."""
+    seconds = max(0.0, float(seconds))
+    total_secs = int(seconds)
+    hours = total_secs // 3600
+    mins = (total_secs % 3600) // 60
+    secs = total_secs % 60
+    if hours > 0:
+        return f"{hours:02d}:{mins:02d}:{secs:02d}"
+    return f"{mins:02d}:{secs:02d}"
 
 
 class _FallbackBlock:
@@ -399,6 +412,9 @@ class Game(Entity):
 
         # Biến trạng thái trò chơi
         self.steps = 0
+        self.elapsed_time = 0.0
+        self._last_displayed_sec = -1
+        self._play_session = 0
         self.is_animating = False
         self.is_game_over = False
         self.is_replaying = False
@@ -479,7 +495,7 @@ class Game(Entity):
         self.try_move(action)
 
     def update(self):
-        """Tự động điều chỉnh kích thước background vừa khít màn hình khi thay đổi kích thước cửa sổ."""
+        """Tự động điều chỉnh kích thước background vừa khít màn hình khi thay đổi kích thước cửa sổ và cập nhật thời gian chơi."""
         if hasattr(self, "background") and self.background:
             import math
             dist = 150.0
@@ -488,6 +504,17 @@ class Game(Entity):
             aspect = getattr(camera, "aspect_ratio", 16 / 9)
             w = h * aspect
             self.background.scale = (w, h)
+
+        # Cập nhật đồng hồ thời gian chơi trong mỗi frame khi màn chơi đang diễn ra
+        if not self.is_game_over:
+            dt = getattr(utime, "dt", 0.0)
+            if dt > 0:
+                self.elapsed_time += min(dt, 0.1)
+                cur_sec = int(self.elapsed_time)
+                if cur_sec != self._last_displayed_sec:
+                    self._last_displayed_sec = cur_sec
+                    if hasattr(self, "time_text") and self.time_text:
+                        self.time_text.text = f"TIME: {self.format_time(self.elapsed_time)}"
 
     def input(self, key):
         """Xử lý sự kiện bàn phím từ người chơi."""
@@ -515,22 +542,27 @@ class Game(Entity):
             self.back_to_level_select()
             return
 
-        # Ánh xạ phím sang danh sách ALL_ACTIONS chuẩn
+        # Ánh xạ phím sang danh sách ALL_ACTIONS chuẩn (hỗ trợ cả chữ hoa/thường và các định dạng phím mũi tên)
+        k = key.lower() if isinstance(key, str) else key
         key_map = {
             "w": "UP",
             "up arrow": "UP",
+            "arrow_up": "UP",
             "s": "DOWN",
             "down arrow": "DOWN",
+            "arrow_down": "DOWN",
             "a": "LEFT",
             "left arrow": "LEFT",
+            "arrow_left": "LEFT",
             "d": "RIGHT",
             "right arrow": "RIGHT",
+            "arrow_right": "RIGHT",
             "space": "SWITCH",
             "tab": "SWITCH",
         }
 
-        if key in key_map:
-            action = key_map[key]
+        if k in key_map:
+            action = key_map[k]
             # SWITCH chỉ hợp lệ khi khối đang ở trạng thái SPLIT
             if action == "SWITCH":
                 ori = getattr(self.block, "orientation", Orientation.STANDING)
@@ -571,13 +603,25 @@ class Game(Entity):
         if hasattr(self, "steps_text") and self.steps_text:
             self.steps_text.text = f"STEPS: {self.steps}"
 
-        self.is_animating = False
-
         # Kiểm tra chiến thắng
         if self.board.is_win(self.block):
-            self.show_win()
-        elif self.is_replaying:
-            invoke(self.play_next_solution_move, delay=0.12)
+            self.is_animating = True
+            self.is_game_over = True
+            self.is_replaying = False
+            current_session = self._play_session
+
+            def _on_win_fall_complete():
+                if getattr(self, "_play_session", 0) == current_session:
+                    self.show_win()
+
+            if hasattr(self.block_renderer, "animate_goal_fall"):
+                self.block_renderer.animate_goal_fall(on_complete=_on_win_fall_complete)
+            else:
+                self.block_renderer.animate_fall(on_complete=_on_win_fall_complete, rotate=False, distance=2.05)
+        else:
+            self.is_animating = False
+            if self.is_replaying:
+                invoke(self.play_next_solution_move, delay=0.12)
 
     def start_fall(self, transition, direction):
         """Phân loại tình huống rơi khi nước đi không hợp lệ (valid=False)."""
@@ -680,7 +724,29 @@ class Game(Entity):
             parent=self.ui_root,
             text="STEPS: 0",
             origin=(0, 0),
+            position=(-0.16, 0.40, -0.05),
+            scale=1.15,
+            color=PRIMARY,
+            **font_bold_kwargs,
+        )
+
+        # Dấu phân cách giữa Steps và Time
+        self.hud_separator = Text(
+            parent=self.ui_root,
+            text="|",
+            origin=(0, 0),
             position=(0, 0.40, -0.05),
+            scale=1.0,
+            color=GRAY,
+            **font_kwargs,
+        )
+
+        # Đồng hồ thời gian chơi (Time)
+        self.time_text = Text(
+            parent=self.ui_root,
+            text="TIME: 00:00",
+            origin=(0, 0),
+            position=(0.16, 0.40, -0.05),
             scale=1.15,
             color=PRIMARY,
             **font_bold_kwargs,
@@ -815,10 +881,13 @@ class Game(Entity):
         self.result_stats.text = stats
         self.result_stats.scale = stats_scale
 
+    format_time = staticmethod(format_time)
+
     def show_win(self):
         """Hiển thị giao diện chiến thắng kèm số liệu thống kê đầy đủ."""
         self.is_game_over = True
         self.audio_manager.play_win_sound()
+        time_str = self.format_time(self.elapsed_time)
 
         if self.mode == "solve" and self.search_result:
             r = self.search_result
@@ -836,14 +905,14 @@ class Game(Entity):
             peak = getattr(r, "peak_frontier", 0)
 
             stats_msg = (
-                f"Steps: {steps}   |   Cost: {cost:.2f}   |   Time: {time_sec:.4f}s\n"
-                f"Memory: {mem_mb:.2f} MB   |   Expanded: {expanded}   |   Generated: {generated}\n"
-                f"Peak Frontier: {peak}"
+                f"Steps: {steps}   |   Cost: {cost:.2f}   |   Search: {time_sec:.4f}s\n"
+                f"Playtime: {time_str}   |   Expanded: {expanded}   |   Generated: {generated}\n"
+                f"Memory: {mem_mb:.2f} MB   |   Peak Frontier: {peak}"
             )
             subtitle_msg = f"Solver [{self.algorithm}] executed optimal solution!"
             detailed = True
         else:
-            stats_msg = f"Total Steps Taken: {self.steps}"
+            stats_msg = f"Time: {time_str}   |   Total Steps: {self.steps}"
             subtitle_msg = "Great Job! Block dropped cleanly into the goal."
             detailed = False
 
@@ -858,10 +927,11 @@ class Game(Entity):
     def show_lose(self):
         """Hiển thị thông báo khi khối rơi khỏi bàn cờ."""
         self.is_game_over = True
+        time_str = self.format_time(self.elapsed_time)
         self._show_result(
             title="STAGE FAILED!",
             subtitle="The block fell into the abyss.",
-            stats=f"Steps reached: {self.steps}",
+            stats=f"Time: {time_str}   |   Steps reached: {self.steps}",
             outcome="lose",
             detailed=False,
         )
@@ -925,7 +995,10 @@ class Game(Entity):
         """Khôi phục trạng thái ban đầu của màn chơi."""
         self.audio_manager.stop_result_sounds()
 
+        self._play_session += 1
         self.steps = 0
+        self.elapsed_time = 0.0
+        self._last_displayed_sec = -1
         self.is_animating = False
         self.is_game_over = False
         self.is_replaying = False
@@ -944,11 +1017,17 @@ class Game(Entity):
 
         self.renderer.refresh_bridge_states(self.bridge_states)
 
-        self.block_renderer.current_block = self.block
-        self.block_renderer.update_transform()
+        if hasattr(self, "block_renderer") and self.block_renderer:
+            if hasattr(self.block_renderer, "stop_animations"):
+                self.block_renderer.stop_animations()
+            self.block_renderer.current_block = self.block
+            self.block_renderer.update_transform()
 
         if hasattr(self, "steps_text") and self.steps_text:
             self.steps_text.text = "STEPS: 0"
+
+        if hasattr(self, "time_text") and self.time_text:
+            self.time_text.text = "TIME: 00:00"
 
         if hasattr(self, "result_panel") and self.result_panel:
             self.result_panel.enabled = False
@@ -964,8 +1043,13 @@ class Game(Entity):
 
     def on_destroy(self):
         """Dọn sạch mọi thực thể khi thoát Game Scene."""
+        self._play_session += 1
         self.is_replaying = False
         self.audio_manager.stop_result_sounds()
+
+        if hasattr(self, "block_renderer") and self.block_renderer:
+            if hasattr(self.block_renderer, "stop_animations"):
+                self.block_renderer.stop_animations()
 
         if hasattr(self, "background") and self.background:
             destroy(self.background)
@@ -978,3 +1062,7 @@ class Game(Entity):
         if hasattr(self, "ui_root") and self.ui_root:
             destroy(self.ui_root)
             self.ui_root = None
+
+        self.time_text = None
+        self.hud_separator = None
+        self.steps_text = None

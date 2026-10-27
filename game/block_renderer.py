@@ -141,10 +141,23 @@ class BlockRenderer:
             }
             return BlockTransform(Vec3(active_pos.x, 0.5, active_pos.z), Vec3(0.94, 1.0, 0.94), split_info=split_info)
 
+    def stop_animations(self):
+        """Dừng sạch mọi animation đang chạy trên các thực thể block."""
+        for ent in (self.block_entity, self.split_cube1, self.split_cube2):
+            if ent and hasattr(ent, "animations"):
+                for anim in list(ent.animations):
+                    try:
+                        anim.kill()
+                    except Exception:
+                        pass
+                ent.animations.clear()
+
     def update_transform(self):
         """Cập nhật vị trí, kích thước và màu sắc hiển thị của các thực thể 3D."""
         if not self.current_block:
             return
+
+        self.stop_animations()
 
         ori = getattr(self.current_block, "orientation", Orientation.STANDING)
         is_split = (ori == Orientation.SPLIT or (hasattr(ori, "name") and ori.name == "SPLIT") or ori == 3)
@@ -371,7 +384,29 @@ class BlockRenderer:
         if on_complete:
             on_complete()
 
-    def animate_fall(self, on_complete):
+    def animate_goal_fall(self, on_complete):
+        """Diễn hoạt khối chìm dần vào lòng ô goal và biến mất khi vào trong ô (không lòi xuống dưới đáy map)."""
+        duration = 0.65
+        ori = getattr(self.current_block, "orientation", Orientation.STANDING)
+        is_split = (ori == Orientation.SPLIT or (hasattr(ori, "name") and ori.name == "SPLIT") or ori == 3)
+
+        target = (self.split_cube1 if getattr(self.current_block, "active_index", 0) == 0 else self.split_cube2) if is_split else self.block_entity
+
+        # Đáy khối luôn giữ ở y = 0.0 (mặt sàn miệng hố), chiều cao và tâm khối hạ dần về 0
+        # Tạo hiệu ứng khối chìm lọt vào trong lòng ô goal và biến mất sạch sẽ, không bị lòi xuống dưới sàn map
+        target.animate_y(0.0, duration=duration, curve=curve.in_quad)
+        target.animate_scale_y(0.0, duration=duration, curve=curve.in_quad)
+        target.animate_color(color.rgba32(0, 0, 0, 0), duration=duration, curve=curve.in_quad)
+
+        def _cleanup():
+            if target:
+                target.enabled = False
+            if on_complete:
+                on_complete()
+
+        invoke(_cleanup, delay=duration + 0.05)
+
+    def animate_fall(self, on_complete, rotate=True, distance=18.0):
         """Diễn hoạt rơi thẳng đứng xuống vực sâu khi đứng trên ô rỗng/ô nứt sập."""
         duration = 0.75
         ori = getattr(self.current_block, "orientation", Orientation.STANDING)
@@ -380,13 +415,32 @@ class BlockRenderer:
         if is_split:
             active_idx = getattr(self.current_block, "active_index", 0)
             active_cube = self.split_cube1 if active_idx == 0 else self.split_cube2
-            active_cube.animate_y(active_cube.y - 12.0, duration=duration, curve=curve.in_quad)
-            active_cube.animate_rotation_x(active_cube.rotation_x + 40, duration=duration)
-        else:
-            self.block_entity.animate_y(self.block_entity.y - 12.0, duration=duration, curve=curve.in_quad)
-            self.block_entity.animate_rotation_x(self.block_entity.rotation_x + 35, duration=duration)
+            active_cube.animate_y(active_cube.y - distance, duration=duration, curve=curve.in_quad)
+            active_cube.animate_scale(Vec3(0.01, 0.01, 0.01), duration=duration, curve=curve.in_quad)
+            active_cube.animate_color(color.rgba32(0, 0, 0, 0), duration=duration, curve=curve.in_quad)
+            if rotate:
+                active_cube.animate_rotation_x(active_cube.rotation_x + 40, duration=duration)
 
-        invoke(lambda: on_complete() if on_complete else None, delay=duration + 0.05)
+            def _cleanup_split():
+                active_cube.enabled = False
+                if on_complete:
+                    on_complete()
+
+            invoke(_cleanup_split, delay=duration + 0.05)
+        else:
+            self.block_entity.animate_y(self.block_entity.y - distance, duration=duration, curve=curve.in_quad)
+            self.block_entity.animate_scale(Vec3(0.01, 0.01, 0.01), duration=duration, curve=curve.in_quad)
+            self.block_entity.animate_color(color.rgba32(0, 0, 0, 0), duration=duration, curve=curve.in_quad)
+            if rotate:
+                self.block_entity.animate_rotation_x(self.block_entity.rotation_x + 35, duration=duration)
+
+            def _cleanup_block():
+                if self.block_entity:
+                    self.block_entity.enabled = False
+                if on_complete:
+                    on_complete()
+
+            invoke(_cleanup_block, delay=duration + 0.05)
 
     def animate_split_fall(self, supported_cells, on_complete):
         """Diễn hoạt rơi cho các cube bị mất sàn đỡ trong trạng thái split."""
@@ -401,14 +455,26 @@ class BlockRenderer:
             fall_1 = True
 
         if fall_1:
-            self.split_cube1.animate_y(self.split_cube1.y - 12.0, duration=duration, curve=curve.in_quad)
+            self.split_cube1.animate_y(self.split_cube1.y - 18.0, duration=duration, curve=curve.in_quad)
+            self.split_cube1.animate_scale(Vec3(0.01, 0.01, 0.01), duration=duration, curve=curve.in_quad)
+            self.split_cube1.animate_color(color.rgba32(0, 0, 0, 0), duration=duration, curve=curve.in_quad)
             self.split_cube1.animate_rotation_z(self.split_cube1.rotation_z + 30, duration=duration)
 
         if fall_2:
-            self.split_cube2.animate_y(self.split_cube2.y - 12.0, duration=duration, curve=curve.in_quad)
+            self.split_cube2.animate_y(self.split_cube2.y - 18.0, duration=duration, curve=curve.in_quad)
+            self.split_cube2.animate_scale(Vec3(0.01, 0.01, 0.01), duration=duration, curve=curve.in_quad)
+            self.split_cube2.animate_color(color.rgba32(0, 0, 0, 0), duration=duration, curve=curve.in_quad)
             self.split_cube2.animate_rotation_z(self.split_cube2.rotation_z - 30, duration=duration)
 
-        invoke(lambda: on_complete() if on_complete else None, delay=duration + 0.05)
+        def _cleanup():
+            if fall_1:
+                self.split_cube1.enabled = False
+            if fall_2:
+                self.split_cube2.enabled = False
+            if on_complete:
+                on_complete()
+
+        invoke(_cleanup, delay=duration + 0.05)
 
     def animate_tip_and_fall(self, invalid_block, direction, on_complete):
         """Diễn hoạt khối nghiêng qua mép bàn cờ khi lăn trượt ra ngoài rồi rơi tự do."""
@@ -499,15 +565,23 @@ class BlockRenderer:
 
     def _finish_tip(self, pivot, fall_duration, on_complete):
         """Tiếp tục rơi thẳng đứng xuống vực sau khi đã nghiêng qua mép."""
-        pivot.animate_y(pivot.y - 12.0, duration=fall_duration, curve=curve.in_quad)
+        pivot.animate_y(pivot.y - 18.0, duration=fall_duration, curve=curve.in_quad)
+        pivot.animate_scale(Vec3(0.01, 0.01, 0.01), duration=fall_duration, curve=curve.in_quad)
+
+        tipping_entity = getattr(self, "_tipping_entity", None)
+        target = tipping_entity if tipping_entity else self.block_entity
+        if target:
+            target.animate_color(color.rgba32(0, 0, 0, 0), duration=fall_duration, curve=curve.in_quad)
 
         def _cleanup():
             tipping_entity = getattr(self, "_tipping_entity", None)
             if tipping_entity:
                 tipping_entity.world_parent = self.root
+                tipping_entity.enabled = False
                 self._tipping_entity = None
             elif self.block_entity:
                 self.block_entity.world_parent = self.root
+                self.block_entity.enabled = False
 
             if pivot:
                 destroy(pivot)

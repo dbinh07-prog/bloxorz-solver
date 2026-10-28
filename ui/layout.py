@@ -1,9 +1,10 @@
-"""Tên hằng số theo repo tham chiếu; thành viên 2 tự chọn giá trị giao diện."""
+MENU_X = -0.68
 
-MENU_X = None
-TITLE_Y = None
-CUBE_OFFSET_X = None
-CUBE_OFFSET_Y = None
-MENU_LIST_START_Y = None
-FOOTER_Y = None
-BACKGROUND_SCALE = None
+TITLE_Y = 0.34
+CUBE_OFFSET_X = 0.62
+CUBE_OFFSET_Y = -0.01
+
+MENU_LIST_START_Y = 0.10
+
+FOOTER_Y = -0.44
+BACKGROUND_SCALE = (1.8, 1.05)

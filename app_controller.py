@@ -1,28 +1,75 @@
-"""Tên hàm và tham số theo repo tham chiếu; thành viên 2 tự viết phần GUI."""
+from ursina import destroy
+
+from game.audio_manager import AudioManager
+from game.game import Game
+from scenes.level_select_scene import LevelSelectScene
+from scenes.menu_scene import MenuScene
+from scenes.tutorial_scene import TutorialScene
 
 
 class AppController:
 
     def __init__(self):
-        raise NotImplementedError
+        self.audio_manager = AudioManager()
+        self.current_scene = None
+
+        self.show_main_menu()
 
     def input(self, key):
-        raise NotImplementedError
+        if self.current_scene and hasattr(self.current_scene, "input"):
+            self.current_scene.input(key)
 
     def clear_screen(self):
-        raise NotImplementedError
+        if self.current_scene is not None:
+            if hasattr(self.current_scene, "on_destroy"):
+                self.current_scene.on_destroy()
+
+            destroy(self.current_scene)
+            self.current_scene = None
 
     def show_main_menu(self):
-        raise NotImplementedError
+        self.clear_screen()
+        if self.audio_manager:
+            self.audio_manager.play_menu_music()
+
+        self.current_scene = MenuScene(
+            on_play=lambda: self.show_level_select("play"),
+            on_solve=lambda: self.show_level_select("solve"),
+            on_tutorial=self.show_tutorial,
+        )
 
     def show_tutorial(self):
-        raise NotImplementedError
+        self.clear_screen()
+        if self.audio_manager:
+            self.audio_manager.play_menu_music()
+
+        self.current_scene = TutorialScene(
+            on_back=self.show_main_menu,
+        )
 
     def show_level_select(self, mode):
-        raise NotImplementedError
+        self.clear_screen()
+        if self.audio_manager:
+            self.audio_manager.play_menu_music()
+
+        self.current_scene = LevelSelectScene(
+            mode=mode,
+            on_level_selected=self.handle_level_selected,
+            on_back=self.show_main_menu,
+        )
 
     def handle_level_selected(self, level_path, mode, algorithm=None):
-        raise NotImplementedError
+        self.start_game(level_path, mode, algorithm)
 
     def start_game(self, level_path, mode, algorithm):
-        raise NotImplementedError
+        self.clear_screen()
+        if self.audio_manager:
+            self.audio_manager.play_gameplay_music()
+
+        self.current_scene = Game(
+            level_path=level_path,
+            mode=mode,
+            algorithm=algorithm,
+            on_back=lambda: self.show_level_select(mode),
+            audio_manager=self.audio_manager,
+        )

@@ -2,7 +2,7 @@
 
 Thành viên 1 chốt tên hàm và dữ liệu ở đây. Nếu cần đổi chỗ GUI, solver hoặc cơ chế nâng cao đang dùng, báo nhau trước khi sửa.
 
-Tên file, hàm public và tham số đang theo repo mẫu. Contract bên dưới là phần nhóm cần tự triển khai; `mechanics.py` và `actions.py` là phần nhóm tách/thêm để làm việc song song. Các hàm trong bộ khung hiện chỉ báo `NotImplementedError`.
+Tên hàm, dữ liệu và format map dưới đây là API dùng chung của nhóm. `mechanics.py` và `actions.py` được tách để các thành viên làm song song.
 
 ## Quy ước dữ liệu
 
@@ -73,11 +73,11 @@ Thành viên 1 và 3 cùng kiểm tra trường hợp công tắc đóng cầu n
 | `SearchResult.steps` | `len(path)`. |
 | `SearchResult.search_time` | Giây, không tính animation GUI. |
 | `SearchResult.memory_usage` | Peak bytes khi tìm kiếm; `memory_usage_mb` là MiB. |
-| `SearchResult.expanded_nodes` | Số node lấy ra để xét successor; phải cùng định nghĩa ở mọi solver. |
+| `SearchResult.expanded_nodes` | Số node lấy ra khỏi frontier để xét, tính cả goal và bỏ entry cũ; dùng cùng định nghĩa ở mọi solver. |
 | `Game.try_move(action)` | Gọi `Board.transition`, cập nhật model/renderer sau animation. |
 | `Game.play_next_solution_move()` | Replay từng action; mỗi bước vẫn gọi `try_move`. |
 
-`found=False` thì path rỗng. Solver trả cả `solution_cost`, `generated_nodes`, `peak_frontier`. Với IDS, báo cáo nêu rõ số node mở rộng qua các vòng lặp có tính lặp lại. Chạy thực nghiệm cố định cùng map, cost, môi trường và số lần lặp.
+`found=False` thì path rỗng. Solver trả cả `solution_cost`, `generated_nodes`, `peak_frontier`. `generated_nodes` tính cả root hợp lệ và mọi successor hợp lệ; IDS tính lại root và các node sinh ra ở từng vòng giới hạn độ sâu. Với IDS, báo cáo nêu rõ số node mở rộng qua các vòng lặp có tính lặp lại. Chạy thực nghiệm cố định cùng map, cost, môi trường và số lần lặp.
 
 ## Map JSON
 
@@ -100,9 +100,14 @@ Thành viên 1 và 3 cùng kiểm tra trường hợp công tắc đóng cầu n
 
 Ví dụ trên minh họa **schema**, không đảm bảo có lời giải. Cầu và công tắc định nghĩa trong metadata, không dựa riêng vào ký tự grid. `action` của switch nhận `toggle`, `open`, `close`; split switch thêm `targets` gồm đúng hai ô. Thành viên 4 sở hữu map thực nghiệm và mô tả kết quả mong đợi; thành viên 3 rà lại map có cơ chế nâng cao.
 
-## Điểm còn phải chốt
+## Heuristic A* và GUI
 
-- Heuristic: split switch **teleport** có thể đưa khối đến gần goal trong một bước. Manhattan/2 đơn thuần có thể overestimate; thành viên 1 phải chứng minh với cả teleport hoặc dùng cận dưới an toàn cho map có split (ví dụ `h=0` ban đầu, rồi cải tiến bằng relaxed graph có cạnh teleport). Kiểm tra nhất quán của `h` trên các transition thực tế.
-- Nếu đổi cost v0.1, thành viên 1 + 4 cập nhật đồng thời UCS, A*, benchmark và phần giải thích trong báo cáo.
-- Giới hạn của IDS trên map không có lời giải và cách báo timeout trong benchmark.
-- Phương thức chọn cube bằng chuột (nếu có): GUI chuyển thành action/chỉ số hợp lệ theo cơ chế đã thống nhất; chuột không đi thẳng vào solver.
+`Board.heuristic` dùng cận khoảng cách Manhattan chia hai cho map không có switch và không quá 64 ô lưới. Với map lớn hơn, tính khoảng cách ngược, giả sử mọi cầu mở và bỏ phụ phí. Khối nguyên vẫn giữ tư thế lăn, ô trống và giới hạn đứng trên fragile. Khi có split, nếu số cặp ô dự kiến không quá 10.000 thì lưu cặp cube bằng chỉ số ô và dùng danh sách ô kề đã tính sẵn. Với bảng lớn hơn, mỗi cube được giả sử có thể ghép với một cube bên cạnh; tra riêng hai cube và lấy giá trị lớn hơn. Cả hai cách đều xét teleport, bỏ chi phí đổi cube active và được chọn theo kích thước map trước khi tìm kiếm. Bảng được dựng trong thời gian search và lưu trong Board; không lấy sẵn từ lần chạy trước khi benchmark. Nếu vượt 100.000 trạng thái thì dùng `h=0`; trạng thái không tới đích trong bảng hoàn chỉnh có `h=inf`.
+
+A* ưu tiên `h` nhỏ hơn nếu các node có cùng `f = g + h`; chỉ dùng thứ tự đưa vào heap khi cả `f` và `h` bằng nhau. Chi phí vẫn là tiêu chí tối ưu.
+
+Mỗi hành động thật được ánh xạ thành đường đi có chi phí không lớn hơn trong mô hình này. Với luật và cost hiện tại, heuristic admissible và consistent. Nếu thêm luật di chuyển hoặc đổi cost thì phải kiểm tra lại lập luận này.
+
+GUI gọi `algorithms.worker.SolverJob` để chạy `solve` trong tiến trình riêng. `poll()` trả `None` khi đang chạy hoặc `(SearchResult, None)` / `(None, error)` khi kết thúc. `cancel()` hủy tìm kiếm khi đổi màn hay restart; GUI chỉ cập nhật hình ảnh ở tiến trình chính.
+
+IDS tăng giới hạn độ sâu từng bước, không gọi heuristic và giữ thứ tự action do Board cung cấp. Trong mỗi lần chạy, cache successor theo đầy đủ state key (khối, cube active và cấu hình cầu); ghi nhớ ngân sách độ sâu còn lại đã tìm hết mà không thấy goal. Chỉ bỏ một lần tìm lại khi ngân sách đó đã được xét đủ; không dùng visited chung chỉ dựa vào việc đã gặp state. Cache được tạo mới cho mỗi lần gọi solver, tính trong search time và peak memory. Các số đếm cộng qua mọi vòng, bỏ qua node đã được memo xác nhận thất bại; peak frontier của IDS là số frame DFS lớn nhất, còn peak memory bao gồm cả cache và bảng trạng thái.

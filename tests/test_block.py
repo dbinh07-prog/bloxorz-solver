@@ -1,5 +1,3 @@
-"""Tên test tham khảo từ repo mẫu; thay các phần TODO bằng test của nhóm."""
-
 import unittest
 
 

@@ -16,18 +16,19 @@ def level_number(path: Path) -> int:
 def run_level(level_path: Path, algorithm: str, repeats: int = 1) -> dict:
     lvl = level_number(level_path)
     record = {
-        "level": lvl,
-        "map_name": level_path.stem,
-        "algorithm": algorithm,
-        "found": False,
-        "steps": 0,
-        "cost": 0.0,
-        "time_s": 0.0,
-        "memory_mb": 0.0,
-        "expanded_nodes": 0,
-        "generated_nodes": 0,
-        "peak_frontier": 0,
-        "error": "",
+        "Level": lvl,
+        "Map_Name": level_path.stem,
+        "Algorithm": algorithm,
+        "Found": False,
+        "Steps": 0,
+        "Cost": 0.0,
+        "Time_s": 0.0,
+        "Memory_MB": 0.0,
+        "Expanded_Nodes": 0,
+        "Generated_Nodes": 0,
+        "Peak_Frontier": 0,
+        "Path": "",
+        "Error": "",
     }
 
     times = []
@@ -41,18 +42,19 @@ def run_level(level_path: Path, algorithm: str, repeats: int = 1) -> dict:
             last_res = res
             times.append(res.search_time)
         except Exception as e:
-            record["error"] = f"{type(e).__name__}: {e}"
+            record["Error"] = f"{type(e).__name__}: {e}"
             return record
 
     if last_res is not None:
-        record["found"] = last_res.found
-        record["steps"] = last_res.steps
-        record["cost"] = round(last_res.solution_cost, 2)
-        record["time_s"] = round(sum(times) / len(times), 4)
-        record["memory_mb"] = round(last_res.memory_usage_mb, 4)
-        record["expanded_nodes"] = last_res.expanded_nodes
-        record["generated_nodes"] = last_res.generated_nodes
-        record["peak_frontier"] = last_res.peak_frontier
+        record["Found"] = last_res.found
+        record["Steps"] = last_res.steps
+        record["Cost"] = round(last_res.solution_cost, 2)
+        record["Time_s"] = round(sum(times) / len(times), 4)
+        record["Memory_MB"] = round(last_res.memory_usage_mb, 4)
+        record["Expanded_Nodes"] = last_res.expanded_nodes
+        record["Generated_Nodes"] = last_res.generated_nodes
+        record["Peak_Frontier"] = last_res.peak_frontier
+        record["Path"] = " ".join(last_res.path) if last_res.path else ""
 
     return record
 
@@ -82,19 +84,19 @@ def main() -> None:
             record = run_level(level_path, algo, repeats=1)
             all_records.append(record)
 
-            status = "YES" if record["found"] else ("ERR" if record["error"] else "NO")
+            status = "YES" if record["Found"] else ("ERR" if record["Error"] else "NO")
             print(
-                f"{record['map_name']:<8} | {algo:<6} | {status:<6} | "
-                f"{record['steps']:<6} | {record['cost']:<7} | {record['time_s']:<9} | "
-                f"{record['expanded_nodes']:<9} | {record['memory_mb']}"
+                f"{record['Map_Name']:<8} | {algo:<6} | {status:<6} | "
+                f"{record['Steps']:<6} | {record['Cost']:<7} | {record['Time_s']:<9} | "
+                f"{record['Expanded_Nodes']:<9} | {record['Memory_MB']}"
             )
         print("-" * 80)
 
     csv_file = output_dir / "benchmark_results.csv"
     fieldnames = [
-        "level", "map_name", "algorithm", "found", "steps",
-        "cost", "time_s", "memory_mb", "expanded_nodes",
-        "generated_nodes", "peak_frontier", "error",
+        "Level", "Map_Name", "Algorithm", "Found", "Steps",
+        "Cost", "Time_s", "Memory_MB", "Expanded_Nodes",
+        "Generated_Nodes", "Peak_Frontier", "Path", "Error",
     ]
 
     with open(csv_file, mode="w", newline="", encoding="utf-8") as f:
@@ -102,7 +104,7 @@ def main() -> None:
         writer.writeheader()
         writer.writerows(all_records)
 
-    print(f"Đã lưu toàn bộ kết quả thực nghiệm vào: {csv_file}")
+    print(f"Saved benchmark results to: {csv_file}")
 
 if __name__ == "__main__":
     main()

@@ -74,6 +74,30 @@ class SolverTests(unittest.TestCase):
         self.replay(map_test, ucs_result.path)
 
 
+    def test_solvers_on_unsolvable_maps(self):
+        unsolvable_file_json = "maps/example_basic.json"
+        board = Board(unsolvable_file_json)
+        board.goal = (100, 100)
+
+        for name in ("ASTAR","IDS","BFS","UCS"):
+            with self.subTest(algorithm = name):
+                result = solve(board, Block(*board.start),name, board.initial_bridge_states)
+                self.assertFalse(result.found, f"Thuật toán {name} trả về False khi không có đường đi tới đích")
+                self.assertEqual(result.path, [])
+    
+    def test_bfs_ids_StepCount(self):
+        board = Board("maps/level_1.json")
+        start_block = Block(*board.start)
+        bfs_result = solve(board, start_block, "BFS", board.initial_bridge_states)
+        ids_result = solve(board, start_block, "IDS", board.initial_bridge_states)
+
+        self.assertTrue(bfs_result.found)
+        self.assertTrue(ids_result.found)
+        self.assertEqual(bfs_result.steps, ids_result.steps   , f"Thuật toán BFS sinh ra {bfs_result.steps} bước, thuật toán IDS sinh ra {ids_result.steps}, phải có số bước bằng nhau")
+
+
+
+
     def test_all_solvers_reject_invalid_start(self):
         board = Board("maps/example_basic.json")
         for name in ("BFS", "IDS", "UCS", "ASTAR"):

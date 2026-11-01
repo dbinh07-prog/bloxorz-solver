@@ -52,6 +52,20 @@ def format_time(seconds):
     return f"{mins:02d}:{secs:02d}"
 
 
+def _edge_tip_direction(supported_cell, unsupported_cell):
+    dr = unsupported_cell[0] - supported_cell[0]
+    dc = unsupported_cell[1] - supported_cell[1]
+    if dr < 0:
+        return "UP"
+    if dr > 0:
+        return "DOWN"
+    if dc < 0:
+        return "LEFT"
+    if dc > 0:
+        return "RIGHT"
+    return "DOWN"
+
+
 class Game(Entity):
 
     def __init__(self, level_path, mode="play", algorithm=None, on_back=None, audio_manager=None):
@@ -327,20 +341,57 @@ class Game(Entity):
             )
             return
 
+        has_switch_change = bool(getattr(transition, "activated_switches", ())) or new_bridges != self.bridge_states
+        if has_switch_change:
+            current_session = self._play_session
+
+            def _after_switch_move():
+                if getattr(self, "_play_session", 0) != current_session:
+                    return
+                self.block = inv_block
+                self.bridge_states = new_bridges
+                self.renderer.refresh_bridge_states(new_bridges)
+
+                ori_inv_now = getattr(inv_block, "orientation", Orientation.STANDING)
+                is_inv_split = (
+                    ori_inv_now == Orientation.SPLIT
+                    or (hasattr(ori_inv_now, "name") and ori_inv_now.name == "SPLIT")
+                    or ori_inv_now == 3
+                )
+                if is_inv_split:
+                    supported = [
+                        c for c in (inv_block.pos1, inv_block.pos2)
+                        if hasattr(self.board, "is_floor") and self.board.is_floor(c[0], c[1], new_bridges)
+                    ]
+                    self.block_renderer.animate_split_fall(supported, on_complete=self.show_lose)
+                else:
+                    cells = inv_block.get_cells() if hasattr(inv_block, "get_cells") else []
+                    supported_cells = [
+                        c for c in cells
+                        if hasattr(self.board, "is_floor") and self.board.is_floor(c[0], c[1], new_bridges)
+                    ]
+                    if len(supported_cells) == 1 and len(cells) == 2:
+                        unsupported_cell = [c for c in cells if c != supported_cells[0]][0]
+                        tip_dir = _edge_tip_direction(supported_cells[0], unsupported_cell)
+                        self.block_renderer.animate_edge_tip_and_fall(
+                            supported_cells[0],
+                            tip_dir,
+                            on_complete=self.show_lose,
+                        )
+                    else:
+                        self.block_renderer.animate_fall(on_complete=self.show_lose)
+
+            self.block_renderer.animate_move(
+                self.block,
+                inv_block,
+                direction,
+                on_complete=_after_switch_move,
+            )
+            return
+
+        # 3. Trường hợp is_old_split rơi trực tiếp ra vực (không kích hoạt công tắc)
         if is_old_split:
-            active_idx = getattr(self.block, "active_index", 0)
-            active_cell = inv_block.pos1 if active_idx == 0 else inv_block.pos2
-
-            is_floor = hasattr(self.board, "is_floor") and self.board.is_floor(active_cell[0], active_cell[1], new_bridges)
-            if not is_floor:
-                self.block_renderer.animate_tip_and_fall(inv_block, direction, on_complete=self.show_lose)
-                return
-
-            supported = []
-            for cell in (self.block.pos1, self.block.pos2):
-                if hasattr(self.board, "is_floor") and self.board.is_floor(cell[0], cell[1], new_bridges):
-                    supported.append(cell)
-            self.block_renderer.animate_split_fall(supported, on_complete=self.show_lose)
+            self.block_renderer.animate_tip_and_fall(inv_block, direction, on_complete=self.show_lose)
             return
 
         cells = inv_block.get_cells() if hasattr(inv_block, "get_cells") else []
@@ -348,11 +399,27 @@ class Game(Entity):
             c for c in cells
             if hasattr(self.board, "is_floor") and self.board.is_floor(c[0], c[1], new_bridges)
         ]
-        if len(supported_cells) == 1:
-            self.block_renderer.animate_edge_tip_and_fall(
-                supported_cells[0],
+        if len(supported_cells) == 1 and len(cells) == 2:
+            supported_cell = supported_cells[0]
+            unsupported_cell = [c for c in cells if c != supported_cell][0]
+            tip_dir = _edge_tip_direction(supported_cell, unsupported_cell)
+            current_session = self._play_session
+
+            def _after_edge_move():
+                if getattr(self, "_play_session", 0) != current_session:
+                    return
+                self.block = inv_block
+                self.block_renderer.animate_edge_tip_and_fall(
+                    supported_cell,
+                    tip_dir,
+                    on_complete=self.show_lose,
+                )
+
+            self.block_renderer.animate_move(
+                self.block,
+                inv_block,
                 direction,
-                on_complete=self.show_lose,
+                on_complete=_after_edge_move,
             )
             return
 
@@ -540,6 +607,7 @@ class Game(Entity):
         self.result_stats.scale = stats_scale
 
     format_time = staticmethod(format_time)
+    _edge_tip_direction = staticmethod(_edge_tip_direction)
 
     def show_win(self):
         self.is_game_over = True

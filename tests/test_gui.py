@@ -5,7 +5,7 @@ from actions import ALL_ACTIONS
 from block import Block, Orientation
 from board import TransitionResult
 from game.block_renderer import BlockRenderer
-from game.game import Game, format_time
+from game.game import Game, format_time, _edge_tip_direction
 from game.renderer import Renderer
 from scenes.level_select_scene import get_level_number
 
@@ -489,6 +489,230 @@ class TestIntegratedBoardRendering(unittest.TestCase):
         expected = {(r, c) for r in range(board.rows) for c in range(board.cols) if board.is_floor(r, c) and not board.is_goal(r, c)}
         drawn = {tuple(call.args[:2]) for call in floor.call_args_list}
         self.assertEqual(drawn, expected)
+
+
+
+
+class TestStartFallAnimations(BaseGuiTestCase):
+
+    def test_edge_tip_direction_all_directions(self):
+        self.assertEqual(_edge_tip_direction((2, 3), (1, 3)), "UP")
+        self.assertEqual(_edge_tip_direction((2, 3), (3, 3)), "DOWN")
+        self.assertEqual(_edge_tip_direction((2, 3), (2, 2)), "LEFT")
+        self.assertEqual(_edge_tip_direction((2, 3), (2, 4)), "RIGHT")
+        self.assertEqual(_edge_tip_direction((0, 0), (0, 0)), "DOWN")
+
+    def test_start_fall_edge_tip_animates_move_first_and_uses_correct_tip_dir(self):
+        game = self.create_mock_game()
+
+        inv_block = MagicMock()
+        inv_block.orientation = Orientation.HORIZONTAL
+        inv_block.get_cells.return_value = [(2, 3), (2, 4)]
+        inv_block.pos1 = (2, 3)
+        inv_block.pos2 = (2, 4)
+
+        game.board.is_floor = MagicMock(side_effect=lambda r, c, states=None: (r, c) == (2, 3))
+        game.board.is_fragile = MagicMock(return_value=False)
+
+        transition = MagicMock()
+        transition.block = inv_block
+        transition.bridge_states = game.bridge_states
+        transition.activated_switches = ()
+        transition.valid = False
+
+        game.start_fall(transition, "RIGHT")
+
+        game.block_renderer.animate_move.assert_called_once()
+        args, kwargs = game.block_renderer.animate_move.call_args
+        self.assertEqual(args[0], game.block)
+        self.assertEqual(args[1], inv_block)
+        self.assertEqual(args[2], "RIGHT")
+
+        game.block_renderer.animate_edge_tip_and_fall.assert_not_called()
+
+        on_complete = kwargs.get("on_complete")
+        self.assertIsNotNone(on_complete)
+        on_complete()
+
+        self.assertEqual(game.block, inv_block)
+        game.block_renderer.animate_edge_tip_and_fall.assert_called_once_with(
+            (2, 3),
+            "RIGHT",
+            on_complete=game.show_lose,
+        )
+
+    def test_start_fall_edge_tip_calculates_tip_dir_independent_of_move_direction(self):
+        game = self.create_mock_game()
+
+        inv_block = MagicMock()
+        inv_block.orientation = Orientation.VERTICAL
+        inv_block.get_cells.return_value = [(2, 3), (3, 3)]
+
+        game.board.is_floor = MagicMock(side_effect=lambda r, c, states=None: (r, c) == (3, 3))
+        game.board.is_fragile = MagicMock(return_value=False)
+
+        transition = MagicMock()
+        transition.block = inv_block
+        transition.bridge_states = game.bridge_states
+        transition.activated_switches = ()
+        transition.valid = False
+
+        game.start_fall(transition, "DOWN")
+
+        _, kwargs = game.block_renderer.animate_move.call_args
+        on_complete = kwargs.get("on_complete")
+        on_complete()
+
+        game.block_renderer.animate_edge_tip_and_fall.assert_called_once_with(
+            (3, 3),
+            "UP",
+            on_complete=game.show_lose,
+        )
+
+    def test_start_fall_edge_tip_canceled_on_session_restart(self):
+        game = self.create_mock_game()
+
+        inv_block = MagicMock()
+        inv_block.orientation = Orientation.HORIZONTAL
+        inv_block.get_cells.return_value = [(2, 3), (2, 4)]
+        game.board.is_floor = MagicMock(side_effect=lambda r, c, states=None: (r, c) == (2, 3))
+        game.board.is_fragile = MagicMock(return_value=False)
+
+        transition = MagicMock()
+        transition.block = inv_block
+        transition.bridge_states = game.bridge_states
+        transition.activated_switches = ()
+        transition.valid = False
+
+        game.start_fall(transition, "RIGHT")
+        _, kwargs = game.block_renderer.animate_move.call_args
+        on_complete = kwargs.get("on_complete")
+
+        game.restart()
+
+        on_complete()
+        game.block_renderer.animate_edge_tip_and_fall.assert_not_called()
+
+    def test_start_fall_switch_closes_bridge_under_block(self):
+        game = self.create_mock_game()
+
+        inv_block = MagicMock()
+        inv_block.orientation = Orientation.STANDING
+        inv_block.get_cells.return_value = [(2, 3)]
+        inv_block.pos1 = (2, 3)
+
+        new_bridges = (("b1", False),)
+        game.board.is_floor = MagicMock(return_value=False)
+        game.board.is_fragile = MagicMock(return_value=False)
+
+        transition = MagicMock()
+        transition.block = inv_block
+        transition.bridge_states = new_bridges
+        transition.activated_switches = ("s1",)
+        transition.valid = False
+
+        game.start_fall(transition, "UP")
+
+        game.block_renderer.animate_move.assert_called_once()
+        args, kwargs = game.block_renderer.animate_move.call_args
+        self.assertEqual(args[2], "UP")
+        game.renderer.refresh_bridge_states.assert_not_called()
+        game.block_renderer.animate_fall.assert_not_called()
+
+        on_complete = kwargs.get("on_complete")
+        on_complete()
+
+        self.assertEqual(game.block, inv_block)
+        self.assertEqual(game.bridge_states, new_bridges)
+        game.renderer.refresh_bridge_states.assert_called_once_with(new_bridges)
+        game.block_renderer.animate_fall.assert_called_once_with(on_complete=game.show_lose)
+
+    def test_start_fall_switch_closes_bridge_edge_tip(self):
+        game = self.create_mock_game()
+
+        inv_block = MagicMock()
+        inv_block.orientation = Orientation.HORIZONTAL
+        inv_block.get_cells.return_value = [(2, 3), (2, 4)]
+
+        new_bridges = (("b1", False),)
+        game.board.is_floor = MagicMock(side_effect=lambda r, c, states=None: (r, c) == (2, 3))
+        game.board.is_fragile = MagicMock(return_value=False)
+
+        transition = MagicMock()
+        transition.block = inv_block
+        transition.bridge_states = new_bridges
+        transition.activated_switches = ("s1",)
+        transition.valid = False
+
+        game.start_fall(transition, "RIGHT")
+        _, kwargs = game.block_renderer.animate_move.call_args
+        on_complete = kwargs.get("on_complete")
+        on_complete()
+
+        game.renderer.refresh_bridge_states.assert_called_once_with(new_bridges)
+        game.block_renderer.animate_edge_tip_and_fall.assert_called_once_with(
+            (2, 3),
+            "RIGHT",
+            on_complete=game.show_lose,
+        )
+
+    def test_start_fall_switch_closes_bridge_under_split_cube(self):
+        game = self.create_mock_game()
+
+        inv_block = MagicMock()
+        inv_block.orientation = Orientation.SPLIT
+        inv_block.pos1 = (2, 3)
+        inv_block.pos2 = (5, 5)
+
+        new_bridges = (("b1", False),)
+        # Ô (2, 3) bị sập cầu, ô (5, 5) vẫn còn sàn
+        game.board.is_floor = MagicMock(side_effect=lambda r, c, states=None: (r, c) == (5, 5))
+        game.board.is_fragile = MagicMock(return_value=False)
+
+        transition = MagicMock()
+        transition.block = inv_block
+        transition.bridge_states = new_bridges
+        transition.activated_switches = ("s1",)
+        transition.valid = False
+
+        game.start_fall(transition, "UP")
+        _, kwargs = game.block_renderer.animate_move.call_args
+        on_complete = kwargs.get("on_complete")
+        on_complete()
+
+        game.renderer.refresh_bridge_states.assert_called_once_with(new_bridges)
+        game.block_renderer.animate_split_fall.assert_called_once_with(
+            [(5, 5)],
+            on_complete=game.show_lose,
+        )
+
+    def test_start_fall_switch_canceled_on_session_restart(self):
+        game = self.create_mock_game()
+
+        inv_block = MagicMock()
+        inv_block.orientation = Orientation.STANDING
+        inv_block.get_cells.return_value = [(2, 3)]
+        inv_block.pos1 = (2, 3)
+        game.board.is_floor = MagicMock(return_value=False)
+        game.board.is_fragile = MagicMock(return_value=False)
+
+        transition = MagicMock()
+        transition.block = inv_block
+        transition.bridge_states = (("b1", False),)
+        transition.activated_switches = ("s1",)
+        transition.valid = False
+
+        game.start_fall(transition, "UP")
+        _, kwargs = game.block_renderer.animate_move.call_args
+        on_complete = kwargs.get("on_complete")
+
+        game.restart()
+        game.renderer.refresh_bridge_states.reset_mock()
+        game.block_renderer.animate_fall.reset_mock()
+
+        on_complete()
+        game.renderer.refresh_bridge_states.assert_not_called()
+        game.block_renderer.animate_fall.assert_not_called()
 
 
 if __name__ == "__main__":
